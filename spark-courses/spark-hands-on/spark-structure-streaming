@@ -1,0 +1,107 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+Created on Wed Apr 15 16:06:46 2020
+
+@author: maverick
+
+trying the basic structured streaming example from spark the definitive guide databricks
+"""
+#%%
+from spark101 import SpContext, SpSession
+from pyspark import SparkContext
+dataset_folder = "./../../datasets/"
+#%%
+"""
+ANALYZE as STATIC data
+"""
+# analyze the data as static file
+retail_df = (SpSession.read.format("csv")
+                            .option("header", "true")
+                            .option("inferSchema", "true")
+                            .load(dataset_folder + "/databricks/retail-data/by-day/*.csv"))
+print(retail_df.printSchema())
+print(retail_df.count())
+
+schema = retail_df.schema # to be used for stream data
+#%%
+"""
+sale hours during which a given
+customer (identified by CustomerId) makes a large purchase. 
+For example, let’s add a total cost
+column and see on what days a customer spent the most.
+"""
+
+from pyspark.sql.functions import window, column, desc, col, udf
+from pyspark.sql.types import *
+
+def total_spent(price, quantity):
+    return price * quantity
+
+total_spent_udf = udf(total_spent, FloatType())
+# steps :
+# add new column as total_cost
+# groupby customer id with a window function on invoiceDate with an interval of 1 day
+# sum total_cost accross new interval gained from previous stmt
+max_spent_on_days_static = (retail_df
+                      .withColumn('total_cost', total_spent_udf(retail_df['Quantity'], retail_df['UnitPrice']))   #udf way
+                      # .withColumn('total_cost', retail_df['Quantity']* retail_df['UnitPrice'])  #normal way
+                      .groupBy('CustomerID', window(col('InvoiceDate'), '1 Day'))
+                      .sum('total_cost')
+                      )    
+
+print(max_spent_on_days_static.show(5))
+#%%
+"""
+ANALYZE as STREAMED data
+
+"""
+# step 1: create read stream
+retail_stream = (SpSession.readStream # to read stream data
+                                 .schema(schema)
+                                 .option("maxFilesPerTrigger", 1)  #read max 1 file at a time
+                                 .format("csv")
+                                 .option("header", "true")
+                                 .load(dataset_folder + "/databricks/retail-data/by-day/*.csv"))
+
+# step 2: create transformations on the stream data
+max_spent_on_days_stream = (retail_stream
+                      # .withColumn('total_cost', total_spent_udf(retail_stream['Quantity'], retail_stream['UnitPrice']))   #udf way
+                       .withColumn('total_cost', retail_stream['Quantity']* retail_stream['UnitPrice'])  #normal way
+                      .groupBy('CustomerID', window(col('InvoiceDate'), '1 Day'))
+                      .sum('total_cost')
+                      )    
+
+# print(max_spent_on_days.show(5))
+#%%
+
+"""
+Streaming actions are a bit different from our conventional static action because we’re going to be
+populating data somewhere instead of just calling something like count
+
+The action we will use will output to an in-memory table that we will
+update after each trigger.
+"""
+# step 3: actions on write the transformed data
+
+(max_spent_on_days_stream.writeStream
+                        .format("memory")
+                        .queryName("customer_purchases")
+                        .outputMode("complete")
+                        .start()
+)
+    
+
+#%%
+
+# step 4: read the data and see the changes with each update to the stream
+
+# the sql way (gay)
+SpSession.sql("""
+SELECT *
+FROM customer_purchases
+ORDER BY `sum(total_cost)` DESC
+""")\
+.show(5)
+
+# pyspark way
