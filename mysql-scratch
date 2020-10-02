@@ -1,0 +1,38 @@
+insert into sales_data(store_it, item_id, day, amount) 
+values (3, 3, 1, 10), 
+	(3, 1, 1, 20), 
+	(3, 2,  1, 10), 
+	(3, 3,  1, 10), 
+	(3, 2,  1, 10),
+	(3, 3, 2,  10),
+	(3, 2, 2,  10),
+	(3, 3, 2,  10),
+	(3, 2, 2, 10),
+	(3, 3, 3, 10),
+	(3, 3, 3, 10),
+	(3, 3, 3, 10),
+	(3, 3, 4, 10),
+	(3, 3, 5, 10),
+	(3, 3, 4, 10),
+	(3, 1, 3, 10),
+	(3, 2, 3, 10),
+	(3, 1, 4, 10),
+	(3, 1, 5, 10),
+	(3, 1, 4, 10);
+	
+insert into item_category(category_id, item_id)
+values(1, 1), (1, 2), (2, 3);
+
+select *
+
+select store_it, day, category_id , max(units) over (partition by store_it,day) as unitss
+from 
+(select store_it, day, category_id, count(item_id) as units
+from
+(select s.store_it, s.item_id, s.day, i.category_id
+	from sales_data as s
+	inner join item_category as i
+	on s.item_id = i.item_id) as cte
+
+group by store_it, category_id, day
+order by day) as cte2
